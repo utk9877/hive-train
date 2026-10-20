@@ -18,6 +18,8 @@ def main(argv=None):
     co.add_argument("--split", type=int, choices=(1, 2, 3), default=2)
     co.add_argument("--scenario", choices=("single", "masked", "empty_microbatch", "pattern"), default="single")
     co.add_argument("--allow-cpu", action="store_true", help="permit explicit CPU diagnostic workers")
+    co.add_argument("--adam-eps", type=float, default=1e-8,
+                    help="explicit optimizer experiment sent to both workers; default 1e-8")
     worker = commands.add_parser("worker")
     worker.add_argument("--host", default="127.0.0.1")
     worker.add_argument("--worker-id", choices=("worker-0", "worker-1"), required=True)
@@ -60,12 +62,12 @@ def main(argv=None):
         else:
             from .coordinator import CoordinatorRuntime
             from .local_run import batches_for_step
-            from .config import json_hash
+            from .config import OptimizerConfig, json_hash
             if not 1 <= args.steps <= 100000:
                 raise ValueError("steps must be in 1..100000")
             if args.scenario in ("masked", "empty_microbatch") and args.microbatches < 2:
                 raise ValueError("masked scenarios require at least two microbatches")
-            assignments = make_assignments(split=args.split, dataset_hash=json_hash(
+            assignments = make_assignments(split=args.split, optimizer=OptimizerConfig(eps=args.adam_eps), dataset_hash=json_hash(
                 {"source": "synthetic_v1", "seed": 7, "scenario": args.scenario}))
             run_id = str(uuid4())
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:

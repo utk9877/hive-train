@@ -9,7 +9,7 @@ import sys
 import torch
 from torch import nn
 
-from .config import json_hash
+from .config import MODEL_ARCHITECTURE, json_hash
 
 INIT_ALGORITHM = "named_cpu_v1"
 
@@ -68,7 +68,7 @@ def fixture_manifest(module, seed=2026):
     tensors = [{"name": name, "shape": list(p.shape), "dtype": "float32", "sha256": tensor_hash(p)}
                for name, p in module.named_parameters()]
     specification = [{k: t[k] for k in ("name", "shape", "dtype")} for t in tensors]
-    return {"algorithm": INIT_ALGORITHM, "master_seed": seed,
+    return {"algorithm": INIT_ALGORITHM, "master_seed": seed, "architecture": MODEL_ARCHITECTURE,
             "torch_version": torch.__version__, "tensors": tensors,
             "parameter_spec_hash": json_hash(specification), "fixture_hash": json_hash(tensors)}
 

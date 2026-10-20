@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock
 import torch
 
-from hive_train.config import ModelConfig
+from hive_train.config import ModelConfig, OptimizerConfig
 from hive_train.data import synthetic_batches
 from hive_train.diagnostics import SnapshotWriter
 from hive_train.runtime import Channel
@@ -30,7 +30,7 @@ class DiagnosticTests(unittest.TestCase):
             writers = [SnapshotWriter(root / f"stage-{i}") for i in (0, 1)]
             def observe(stage, optimizer, event, details):
                 writers[details["stage_id"]](stage, optimizer, event, details)
-            run = LocalRun(self, observer=observe)
+            run = LocalRun(self, observer=observe, optimizer=OptimizerConfig(eps=1e-6))
             for step in range(2):
                 last = run.coordinator.step(batches_for_step(step, count=2, scenario="masked"))
             report = {**run.stop(), "assignments": run.assignment,

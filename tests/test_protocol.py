@@ -26,7 +26,7 @@ def message(kind="PING", sender="coordinator", receiver="worker-0", body=None,
 def configuration():
     config = {
         "model": dict(layers=4, width=128, heads=4, mlp_width=512, vocab_size=256,
-                      max_sequence_length=128, architecture="decoder_v1", dtype="float32"),
+                      max_sequence_length=128, architecture="decoder_v2", dtype="float32"),
         "optimizer": dict(name="adamw", lr=.001, beta1=.9, beta2=.999, eps=1e-8,
                           weight_decay=.01, foreach=False, fused=False, amsgrad=False),
         "data": dict(dataset_hash=HASH, tokenizer="synthetic_v1", max_microbatch_size=2,
@@ -90,6 +90,12 @@ class ProtocolTests(unittest.TestCase):
         raw = encode_metadata(metadata, 0)
         self.assertEqual(decode_metadata(raw, 0), metadata)
         self.assertNotIn(b" ", raw)
+
+    def test_old_attention_evaluation_is_rejected_even_with_valid_hash(self):
+        old = configuration()
+        old["body"]["config"]["model"]["architecture"] = "decoder_v1"
+        refresh_hash(old["body"])
+        self.reject(old)
 
     def test_strict_common_keys_integer_bool_and_uuid(self):
         for field, value in [("seq", True), ("seq", -1), ("seq", 1 << 63), ("seq", 2.0),

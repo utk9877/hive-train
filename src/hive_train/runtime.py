@@ -6,7 +6,7 @@ import platform
 import sys
 import time
 
-from .config import ModelConfig, OptimizerConfig, json_hash
+from .config import MODEL_ARCHITECTURE, ModelConfig, OptimizerConfig, json_hash
 from .protocol import ProtocolError, MAX_TENSOR_BYTES, validate_metadata
 from .state import STEP, CHECKPOINT
 from .transport import Timeouts, metadata
@@ -30,11 +30,11 @@ def parameter_name_hash(spec):
 
 
 def make_assignments(*, split=2, batch_size=2, length=32, model=ModelConfig(),
-                     dataset_hash=None, seed=2026):
+                     dataset_hash=None, seed=2026, optimizer=OptimizerConfig()):
     if type(split) is not int or not 0 < split < model.layers:
         raise ValueError("split must be an interior block boundary")
-    config = {"model": {**asdict(model), "architecture": "decoder_v1", "dtype": "float32"},
-              "optimizer": {**asdict(OptimizerConfig()), "name": "adamw", "foreach": False,
+    config = {"model": {**asdict(model), "architecture": MODEL_ARCHITECTURE, "dtype": "float32"},
+              "optimizer": {**asdict(optimizer), "name": "adamw", "foreach": False,
                             "fused": False, "amsgrad": False},
               "data": {"dataset_hash": dataset_hash or json_hash({"source": "synthetic_v1"}),
                        "tokenizer": "synthetic_v1", "max_microbatch_size": batch_size,

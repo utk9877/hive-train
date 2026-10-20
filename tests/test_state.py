@@ -21,7 +21,7 @@ def config_body(stage=0):
     config = {
         "model": {"layers": 4, "width": 128, "heads": 4, "mlp_width": 512,
                   "vocab_size": 256, "max_sequence_length": 128,
-                  "architecture": "decoder_v1", "dtype": "float32"},
+                  "architecture": "decoder_v2", "dtype": "float32"},
         "optimizer": {"name": "adamw", "lr": 0.001, "beta1": 0.9, "beta2": 0.999,
                       "eps": 1e-8, "weight_decay": 0.01, "foreach": False,
                       "fused": False, "amsgrad": False},

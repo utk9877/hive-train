@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 import torch
 
-from .config import ModelConfig, OptimizerConfig, json_hash
+from .config import MODEL_ARCHITECTURE, ModelConfig, OptimizerConfig, json_hash
 from .data import Batch, synthetic_batches
 from .initialization import cpu_state, fixture_manifest, load_fixture, tensor_hash
 from .model import build_stage
@@ -21,6 +21,25 @@ TOLERANCES = {
     "accelerator": {"output": (1e-5, 1e-4), "state": (1e-5, 1e-3), "l2": 5e-3},
     "cross_device": {"output": (1e-4, 1e-3), "state": (1e-4, 1e-2), "l2": 2e-2},
 }
+
+
+class TensorComparisonError(AssertionError):
+    """A failed numerical gate with JSON-safe evidence, never tensor payloads."""
+    def __init__(self, message, diagnostic):
+        super().__init__(message)
+        self.diagnostic = diagnostic
+
+
+class EquivalenceFailure(AssertionError):
+    """Preserve the partial report while still failing the caller and CLI."""
+    def __init__(self, report):
+        super().__init__(report["error"])
+        self.report = report
+
+
+def _tensor_summary(tensor):
+    values = tensor.detach().double()
+    return {"norm": float(values.norm()), "max_abs": float(values.abs().max())}
 
 
 def require_device(name):
@@ -45,6 +64,7 @@ def environment():
             "source_tree_hash": json_hash(source_hashes), "source_files": source_hashes,
             "python": sys.version, "platform": platform.platform(),
             "architecture": platform.machine(), "torch": torch.__version__,
+            "model_architecture": MODEL_ARCHITECTURE,
             "cuda_available": torch.cuda.is_available(),
             "cuda_runtime": torch.version.cuda,
             "mps_built": torch.backends.mps.is_built(),
@@ -63,12 +83,25 @@ def assert_tensor_equal(actual, expected, *, name, tier="cpu", output=False, l2=
     if not bool(torch.isfinite(actual).all() and torch.isfinite(expected).all()):
         raise AssertionError(f"{name}: nonfinite tensor")
     atol, rtol = TOLERANCES[tier]["output" if output else "state"]
-    torch.testing.assert_close(actual, expected, atol=atol, rtol=rtol, msg=lambda m: f"{name}: {m}")
     difference = (actual.double() - expected.double()).reshape(-1)
     norm = float(expected.double().norm())
     relative = float(difference.norm()) / max(norm, 1e-6)
+    worst_index = int(difference.abs().argmax())
+    diagnostic = {"name": name, "tier": tier, "atol": atol, "rtol": rtol,
+                  "max_abs": float(difference.abs().max()), "normalized_l2": relative,
+                  "absolute_l2": float(difference.norm()), "reference_norm": norm,
+                  "actual_norm": float(actual.double().norm()),
+                  "worst_flat_index": worst_index,
+                  "actual_at_worst": float(actual.reshape(-1)[worst_index]),
+                  "reference_at_worst": float(expected.reshape(-1)[worst_index])}
+    try:
+        torch.testing.assert_close(actual, expected, atol=atol, rtol=rtol, msg=lambda m: f"{name}: {m}")
+    except AssertionError as error:
+        raise TensorComparisonError(str(error), {**diagnostic, "criterion": "elementwise"}) from error
     if l2 and norm > 1e-6 and relative > TOLERANCES[tier]["l2"]:
-        raise AssertionError(f"{name}: normalized L2 {relative} exceeds {TOLERANCES[tier]['l2']}")
+        raise TensorComparisonError(
+            f"{name}: normalized L2 {relative} exceeds {TOLERANCES[tier]['l2']}",
+            {**diagnostic, "criterion": "normalized_l2", "limit": TOLERANCES[tier]["l2"]})
     return {"max_abs": float(difference.abs().max()), "normalized_l2": relative}
 
 
@@ -121,7 +154,8 @@ def check_placement(trainer, expected_device=None):
 
 
 def run_equivalence(*, device="cpu", reference_device=None, steps=10, splits=(1, 2, 3),
-                    scenarios=("single", "masked", "empty_microbatch"), config=ModelConfig()):
+                    scenarios=("single", "masked", "empty_microbatch"), config=ModelConfig(),
+                    optimizer=OptimizerConfig()):
     """All compared instances load the same bounded CPU initial fixture.
 
     reference_device defaults to the same backend; an explicit CPU reference
@@ -144,10 +178,11 @@ def run_equivalence(*, device="cpu", reference_device=None, steps=10, splits=(1,
     manifest = fixture_manifest(initial)
     del initial
     report = {"schema": "m1_equivalence_v1", "status": "pass", "environment": environment(),
-              "config": asdict(config), "optimizer": asdict(OptimizerConfig()),
+              "config": {**asdict(config), "architecture": MODEL_ARCHITECTURE}, "optimizer": asdict(optimizer),
               "fixture": manifest, "device": device, "reference_device": reference_device,
               "tier": tier, "tolerances": TOLERANCES[tier], "steps_per_case": steps,
               "parameter_count": sum(t.numel() for t in fixture.values()), "cases": []}
+    report["config_hash"] = json_hash({"model": report["config"], "optimizer": report["optimizer"]})
     for split in splits:
         for scenario in scenarios:
             if scenario not in ("single", "masked", "empty_microbatch"):
@@ -157,8 +192,8 @@ def run_equivalence(*, device="cpu", reference_device=None, steps=10, splits=(1,
             suffix = build_stage(config, split, config.layers, device=target)
             for stage in (whole, prefix, suffix):
                 load_fixture(stage, fixture)
-            expected = ReferenceTrainer([whole], split=split)
-            actual = ReferenceTrainer([prefix, suffix], split=split)
+            expected = ReferenceTrainer([whole], split=split, optimizer=optimizer)
+            actual = ReferenceTrainer([prefix, suffix], split=split, optimizer=optimizer)
             case = {"split": split, "scenario": scenario,
                     "batch_size": 2, "sequence_length": 32, "batch_seed_base": 7, "steps": []}
             for step in range(steps):
@@ -174,8 +209,40 @@ def run_equivalence(*, device="cpu", reference_device=None, steps=10, splits=(1,
                 ref_result, split_result = expected.step(batches), actual.step(batches)
                 check_placement(expected, reference)
                 check_placement(actual, target)
-                metrics = compare_step(split_result, ref_result, actual.snapshot(), expected.snapshot(),
-                                       before_a, before_b, tier=tier)
+                actual_state, reference_state = actual.snapshot(), expected.snapshot()
+                try:
+                    metrics = compare_step(split_result, ref_result, actual_state, reference_state,
+                                           before_a, before_b, tier=tier)
+                except AssertionError as error:
+                    failure = {"split": split, "scenario": scenario, "step": step,
+                               "completed_steps_in_case": len(case["steps"]),
+                               "loss": split_result.loss, "reference_loss": ref_result.loss,
+                               "comparison": getattr(error, "diagnostic", None)}
+                    if failure["comparison"] is not None:
+                        kind, _, parameter = failure["comparison"]["name"].partition("/")
+                        if kind == "optimizer":
+                            parameter = parameter.rsplit("/", 1)[0]
+                        if parameter in actual_state["parameters"]:
+                            failure["parameter"] = parameter
+                            failure["parameter_evidence"] = {}
+                            for label, state, before in (("actual", actual_state, before_a),
+                                                         ("reference", reference_state, before_b)):
+                                evidence = {"gradient": _tensor_summary(state["gradients"][parameter]),
+                                    "update": _tensor_summary(state["parameters"][parameter] - before[parameter])}
+                                for moment in ("exp_avg", "exp_avg_sq", "step"):
+                                    evidence[moment] = _tensor_summary(state["optimizer"][f"{parameter}/{moment}"])
+                                if kind in ("parameters", "gradients", "update"):
+                                    index = failure["comparison"]["worst_flat_index"]
+                                    evidence["at_worst_index"] = {
+                                        "flat_index": index,
+                                        "before": float(before[parameter].reshape(-1)[index]),
+                                        "after": float(state["parameters"][parameter].reshape(-1)[index]),
+                                        "gradient": float(state["gradients"][parameter].reshape(-1)[index]),
+                                        "exp_avg": float(state["optimizer"][f"{parameter}/exp_avg"].reshape(-1)[index]),
+                                        "exp_avg_sq": float(state["optimizer"][f"{parameter}/exp_avg_sq"].reshape(-1)[index])}
+                                failure["parameter_evidence"][label] = evidence
+                    report.update(status="fail", error=str(error), failure=failure, incomplete_case=case)
+                    raise EquivalenceFailure(report) from error
                 worst = max(metrics, key=lambda name: metrics[name]["max_abs"])
                 case["steps"].append({"step": step, "loss": split_result.loss,
                     "reference_loss": ref_result.loss, "valid_tokens": split_result.valid_tokens,
@@ -184,5 +251,4 @@ def run_equivalence(*, device="cpu", reference_device=None, steps=10, splits=(1,
                     "worst_absolute_error": {"name": worst, **metrics[worst]}, "errors": metrics})
             report["cases"].append(case)
             del whole, prefix, suffix, expected, actual
-    report["config_hash"] = json_hash({"model": report["config"], "optimizer": report["optimizer"]})
     return report

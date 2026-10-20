@@ -1,6 +1,6 @@
 # Setup and local connectivity
 
-Status: researched instructions, **unverified on the target Windows RTX 4050 and M4 Mac**. Local [M1](M1.md) diagnostics, [M2](M2.md) transport probe and [M3](M3.md) real serial training launches now exist. Commands below are independent diagnostics or package/setup commands. Sources and compatibility qualifications are in [platform evidence](research/PLATFORM.md), accessed 2026-10-07. Budget 6 GB dedicated NVIDIA memory and 16 GB shared Mac memory separately; see [FEASIBILITY](FEASIBILITY.md).
+Status, 2026-10-20: user-run Mac MPS local numerical suites pass with Python 3.13.14/PyTorch 2.11.0, `decoder_v2`, explicit AdamW epsilon 1e-6 and fallback disabled. This is scoped to the [recorded M1 checks](M1.md#selected-package-pair-on-mac); Windows CUDA, LAN and joint-training acceptance remain pending. Local [M1](M1.md) diagnostics, [M2](M2.md) transport probe and [M3](M3.md) real serial training launches exist. Commands below are independent diagnostics or package/setup commands. Sources and compatibility qualifications are in [platform evidence](research/PLATFORM.md), accessed 2026-10-07. Budget 6 GB dedicated NVIDIA memory and 16 GB shared Mac memory separately; see [FEASIBILITY](FEASIBILITY.md).
 
 ## 1. Prepare matching native Python environments
 

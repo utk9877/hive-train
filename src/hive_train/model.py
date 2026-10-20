@@ -8,14 +8,26 @@ from torch.nn import functional as F
 from .config import ModelConfig
 
 
+class KeyProjection(nn.Linear):
+    """Cancel the softmax-invariant key bias before FP32 score arithmetic.
+
+    q @ (Wx + b) adds q @ b to every allowed score in a row. Softmax
+    cancels that constant exactly. Keep b in autograd with a zero derivative
+    and in AdamW's parameter group, without forming its roundoff residual.
+    """
+    def forward(self, x):
+        return F.linear(x, self.weight, self.bias * 0.0)
+
+
 class Attention(nn.Module):
     def __init__(self, config: ModelConfig, device):
         super().__init__()
         self.heads = config.heads
         self.head_width = config.width // config.heads
         for name in ("query", "key", "value", "output"):
-            setattr(self, name, nn.Linear(config.width, config.width,
-                                          device=device, dtype=torch.float32))
+            projection = KeyProjection if name == "key" else nn.Linear
+            setattr(self, name, projection(config.width, config.width,
+                                           device=device, dtype=torch.float32))
 
     def forward(self, x):
         b, t, d = x.shape

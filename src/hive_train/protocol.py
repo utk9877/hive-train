@@ -14,6 +14,8 @@ import struct
 import unicodedata
 import uuid
 
+from .config import MODEL_ARCHITECTURE
+
 
 PREFIX = struct.Struct("!4sHHIIQ")
 MAX_METADATA_BYTES = 65536
@@ -199,7 +201,7 @@ def _config(config):
     _keys(model, "layers width heads mlp_width vocab_size max_sequence_length architecture dtype")
     for name in ("layers", "width", "heads", "mlp_width", "vocab_size", "max_sequence_length"):
         _uint(model[name], positive=True)
-    _require(model["architecture"] == "decoder_v1" and model["dtype"] == "float32", "unsupported model")
+    _require(model["architecture"] == MODEL_ARCHITECTURE and model["dtype"] == "float32", "unsupported model")
     _require(model["layers"] >= 2 and model["width"] % model["heads"] == 0, "invalid layer/head configuration")
     _keys(optimizer, "name lr beta1 beta2 eps weight_decay foreach fused amsgrad")
     _require(optimizer["name"] == "adamw", "unsupported optimizer")

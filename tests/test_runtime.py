@@ -13,7 +13,7 @@ from uuid import uuid4
 
 import torch
 
-from hive_train.config import ModelConfig
+from hive_train.config import ModelConfig, OptimizerConfig
 from hive_train.coordinator import CoordinatorRuntime
 from hive_train.data import synthetic_batches
 from hive_train.model import build_stage
@@ -42,7 +42,7 @@ def snapshot(stage, optimizer):
 class LocalRun:
     """Run the production session/runtime APIs in a bounded local test harness."""
 
-    def __init__(self, case, *, split=2, observer=None, diagnostic=True):
+    def __init__(self, case, *, split=2, observer=None, diagnostic=True, optimizer=OptimizerConfig()):
         self.case = case
         self.sessions = {}
         self.clients = {}
@@ -51,7 +51,7 @@ class LocalRun:
         self.errors = {}
         self.results = {}
         self.run_id = str(uuid4())
-        self.assignment = make_assignments(split=split, batch_size=2, length=32, model=ModelConfig())
+        self.assignment = make_assignments(split=split, batch_size=2, length=32, model=ModelConfig(), optimizer=optimizer)
         case.addCleanup(self.close)
         with ThreadPoolExecutor(max_workers=1) as executor:
             for worker in WORKERS:
@@ -137,6 +137,28 @@ class RuntimeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         torch.set_num_threads(1)
+
+    def test_explicit_epsilon_reaches_both_workers_and_matches_reference(self):
+        opt = OptimizerConfig(eps=1e-6)
+        capture = Capture()
+        run = LocalRun(self, split=1, observer=capture, optimizer=opt)
+        reference = ReferenceTrainer([build_stage()], split=1, optimizer=opt)
+        batches = synthetic_batches(ModelConfig(), count=2)
+        batches[1].targets[:, 11:] = -100
+        before = reference.snapshot()["parameters"]
+        expected = reference.step(batches)
+        actual = run.coordinator.step(batches)
+        result = StepResult(actual["loss"], actual["valid_tokens"],
+            [m["logits"] for m in capture.micro["worker-1"]],
+            [m["boundary_grad"] for m in capture.micro["worker-0"]])
+        before_actual = {name: value for shard in capture.before.values() for name, value in shard.items()}
+        compare_step(result, expected, capture.merged(), reference.snapshot(), before_actual, before, tier="cpu")
+        defaults = make_assignments(split=1)
+        for worker in WORKERS:
+            self.assertEqual(run.workers[worker].optimizer.param_groups[0]["eps"], 1e-6)
+            self.assertNotEqual(run.assignment[worker]["config_hash"], defaults[worker]["config_hash"])
+            self.assertEqual(defaults[worker]["config"]["optimizer"]["eps"], 1e-8)
+        run.stop()
 
     def test_all_cuts_ten_steps_match_unsplit_gradients_updates_and_adam(self):
         config = ModelConfig()

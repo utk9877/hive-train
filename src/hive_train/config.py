@@ -1,9 +1,12 @@
-"""The frozen decoder_v1 workload; wire-protocol configuration comes in M2."""
+"""Portable decoder workload and versioned numerical evaluation semantics."""
 
 from dataclasses import asdict, dataclass
 import hashlib
 import json
 import math
+
+
+MODEL_ARCHITECTURE = "decoder_v2"
 
 
 @dataclass(frozen=True)

@@ -2,7 +2,7 @@
 
 Building a distributed application that trains **one neural network jointly** on a Windows RTX 4050 laptop (6 GB VRAM, Ryzen 7000H, 16 GB RAM) and an Apple M4 MacBook Air (16 GB unified memory), over local Wi-Fi or a private hotspot.
 
-Status, **2026-10-11**: M1 model/reference, M2 transport/state primitives and M3 serial coordinator/workers are implemented. Separate CPU worker processes execute real forward/backward/AdamW steps and match the reference. Target CUDA/MPS and peer TCP/Wi-Fi acceptance remain pending; checkpoint recovery is next at M4. Correctness, increased trainable capacity, and speed are separate goals; no capacity gain or speedup has been demonstrated. This project is not yet a Git repository; unrelated workspace projects were preserved.
+Status, **2026-10-20**: M1 model/reference, M2 transport/state primitives and M3 serial coordinator/workers are implemented. Separate CPU worker processes execute real forward/backward/AdamW steps and match the reference. User-run Mac MPS numerical suites pass with Python 3.13/PyTorch 2.11.0, `decoder_v2` and explicit AdamW epsilon 1e-6; Windows CUDA, peer TCP/Wi-Fi and actual joint-training acceptance remain pending. Checkpoint recovery is next at M4. Correctness, increased trainable capacity, and speed are separate goals; no capacity gain or speedup has been demonstrated.
 
 ## Recommended design
 
@@ -17,7 +17,13 @@ No NCCL-on-Windows, MPS collective, CUDA translation layer, Kubernetes, cloud GP
 3. Run the implemented [M1 local diagnostics](docs/M1.md) on each accelerator. Acceptance requires that split loss, all gradients, and AdamW updates agree with the unsplit reference under [declared tolerances](docs/VALIDATION.md#numerical-thresholds).
 4. Run the [M2 authenticated transport probe](docs/M2.md) on the actual link, then follow [M3 training launches and comparison](docs/M3.md). M3 supports fresh serial training; checkpoint resume is still future work.
 
-The selected install candidate is CPython 3.13 with PyTorch 2.11.0, platform-appropriate wheels. [SETUP](docs/SETUP.md) owns installation and compatibility qualifications. A blocked download required cached Python 3.11.15/PyTorch 2.13.0 for supplemental CPU tests; the planned package pair remains untested. Local `doctor`, `verify`, `fixture` commands and the `train_cli`, `local_run`, `snapshot_check` modules now exist; exact commands are in M1/M3.
+The selected package pair is CPython 3.13 with PyTorch 2.11.0, platform-appropriate wheels. [SETUP](docs/SETUP.md) owns installation and compatibility qualifications. Earlier blocked downloads required cached Python 3.11.15/PyTorch 2.13.0 for supplemental CPU tests; the selected pair now passes Mac local numerical suites at explicit epsilon 1e-6. Local `doctor`, `verify`, `fixture` commands and the `train_cli`, `local_run`, `snapshot_check` modules exist; exact commands are in M1/M3.
+
+Update, 2026-10-20: user Terminal evidence confirms MPS execution, but the ten-step verifier exposed rounding-only key-bias update sensitivity. The current `decoder_v2` evaluation cancels the softmax-invariant key bias before score arithmetic while retaining its parameter and optimizer state. Numerical thresholds are unchanged. Use matching updated source on both machines; old `decoder_v1` runs are incompatible. Revised target GPU acceptance remains pending; see the [M1 investigation](docs/M1.md#mps-investigation--2026-10-20).
+
+Follow-up: at the explicit experimental eps=1e-6 setting, all nine ten-step `decoder_v2` same-device MPS cases and all nine MPS-versus-CPU cases pass (90 compared steps per suite) in the user's supplemental Python 3.11.15/PyTorch 2.13.0 environment, with fallback disabled. Local Mac numerical checks are complete for that configuration. Same-device MPS also passes at default eps=1e-8, but its CPU-reference check still fails one ordinary weight element at the first masked step. Defaults and numerical thresholds remain unchanged. See [M1 cross-device findings](docs/M1.md#cross-device-optimizer-sensitivity). The selected deployment package pair, Windows CUDA, LAN and joint training acceptance remain pending.
+
+Selected-pair follow-up: both nine-case ten-step suites also pass on Mac with Python 3.13.14/PyTorch 2.11.0 at epsilon 1e-6, fallback disabled. Local Mac numerical checks are complete for that configuration; Windows CUDA, LAN and joint training remain pending. See [M1 selected-pair evidence](docs/M1.md#selected-package-pair-on-mac).
 
 ## Documentation map
 
