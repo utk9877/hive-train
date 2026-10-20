@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hive-train"
+version = "0.1.0"
+description = "Portable split-autograd reference and bounded training transport primitives"
+requires-python = ">=3.11"
+dependencies = ["torch==2.11.0"]
+
+[project.scripts]
+hive-train = "hive_train.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
